@@ -2,5 +2,5 @@
 
 call environment.bat
 
-cd %~dp0system\dazbrowse
+cd %~dp0%system\dazbrowse
 call consoleapp.bat
