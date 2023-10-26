@@ -41,11 +41,11 @@ echo venv %PYTHON%
 
 :activate_install_venv
 set PYTHON="%VENV_DIR%\Scripts\Python.exe"
-pip install -r requirements.txt
 echo venv %PYTHON%
 
 
 :launch
+pip install -r requirements.txt
 %PYTHON% start.py %*
 pause
 exit /b
