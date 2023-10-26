@@ -160,3 +160,5 @@ cython_debug/
 #.idea/
 system/dasbrowse/tmp
 system/python/Scripts
+system/dazbrowse/tmp/stderr.txt
+system/dazbrowse/tmp/stdout.txt
