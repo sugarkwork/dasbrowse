@@ -162,3 +162,10 @@ system/dasbrowse/tmp
 system/python/Scripts
 system/dazbrowse/tmp/stderr.txt
 system/dazbrowse/tmp/stdout.txt
+temp
+system/python/dev.txt
+.gitignore
+system/transformers-cache/version.txt
+system/python/x.txt
+system/dazbrowse/test.py
+system/python/share/man/man1/isympy.1
