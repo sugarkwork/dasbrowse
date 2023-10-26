@@ -45,7 +45,7 @@ echo venv %PYTHON%
 
 
 :launch
-pip install -r requirements.txt
+pip install -r requirements.txt >tmp/stdout.txt 2>tmp/stderr.txt
 %PYTHON% start.py %*
 pause
 exit /b
