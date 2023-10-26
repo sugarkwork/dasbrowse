@@ -6,6 +6,10 @@ import zipfile
 import os
 from flask import Flask, render_template
 
+sdwebui_url = "https://github.com/AUTOMATIC1111/stable-diffusion-webui/releases/download/v1.0.0-pre/sd.webui.zip"
+model_url = "https://huggingface.co/sugarknight/test_illust/resolve/main/gg_mix.safetensors"
+default_model = "./temp/sdwebui/webui/models/Stable-diffusion/gg_mix.safetensors"
+
 def download_and_unzip(url, extract_to='.'):
     response = requests.get(url, stream=True)
     response.raise_for_status()
@@ -55,7 +59,14 @@ def start_subprocess(path):
     if not os.path.exists(path):
         print("Error: The specified path does not exist:", path)
         return
-    process = subprocess.Popen(f'cmd /C "{path}"', stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, shell=True)
+    
+    directory, executable = os.path.split(path)
+    os.environ["SD_WEBUI_RESTARTING"] = "1"
+    process = subprocess.Popen(f'cmd /C "{executable}"', cwd=directory, 
+                               stdout=subprocess.PIPE, 
+                               stdin=subprocess.DEVNULL, 
+                               stderr=subprocess.PIPE, 
+                               text=True, shell=True, env=os.environ)
 
     while True:
         output = process.stdout.readline()
@@ -69,13 +80,18 @@ def start_subprocess(path):
     return_code = process.poll()
     print("Return code:", return_code)
 
+def download_bigdata(url, path):
+    with requests.get(url, stream=True) as r:
+        with open(path, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=1024*1024):
+                f.write(chunk)
+
 def sdwebui_update():
     path = sdwebui_search_path("./temp/sdwebui/update.bat")
     start_subprocess(path)
 
 def sdwebui_download():
-    url = "https://github.com/AUTOMATIC1111/stable-diffusion-webui/releases/download/v1.0.0-pre/sd.webui.zip"
-    download_and_unzip(url, extract_to='./temp/sdwebui')
+    download_and_unzip(sdwebui_url, extract_to='./temp/sdwebui')
 
 def sdwebui_run(options):
     path = sdwebui_search_path("./temp/sdwebui/run.bat")
@@ -86,6 +102,9 @@ def sdwebui_start():
     p.start()
     return p
 
+def sdwebui_download_model():
+    download_bigdata(model_url, default_model)
+
 def main():
     print("Downloading...")
     if not os.path.exists("temp/sdwebui"):
@@ -94,10 +113,14 @@ def main():
     else:
         print("Already downloaded.")
     
+    if not os.path.exists(default_model):
+        print("Downloading model...")
+        sdwebui_download_model()
+    
     sdwebui_update()
     p = sdwebui_start()
 
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
 
     p.terminate()
     p.join() 
