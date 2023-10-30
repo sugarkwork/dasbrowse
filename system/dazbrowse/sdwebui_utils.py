@@ -4,12 +4,15 @@ import multiprocessing
 import threading
 from utils import download_bigdata, download_and_unzip
 
+
 class SDWebUI:
     def __init__(self):
         self.sdwebui_url = "https://github.com/AUTOMATIC1111/stable-diffusion-webui/releases/download/v1.0.0-pre/sd.webui.zip"
-        self.model_url = "https://huggingface.co/sugarknight/test_illust/resolve/main/gg_mix.safetensors"
-        self.default_model = "./temp/sdwebui/webui/models/Stable-diffusion/gg_mix.safetensors"
+        self.model_url = "https://huggingface.co/sugarknight/test_real/resolve/main/bb_mix2.safetensors"
+        self.default_model = "./temp/sdwebui/webui/models/Stable-diffusion/bb_mix2.safetensors"
         self.temp_dir = "./temp/sdwebui"
+        self.api = None
+
 
     def search_path(self, path):
         abspath = os.path.abspath(path)
@@ -37,6 +40,29 @@ class SDWebUI:
 
         return path
 
+
+    def install_cn(self):
+        extension_dir = os.path.abspath(os.path.join(self.temp_dir, "webui", "extensions"))
+        controlnet_model_dir = os.path.abspath(os.path.join(self.temp_dir, "webui", "models", "ControlNet"))
+        print(extension_dir)
+        repo_url = "https://github.com/Mikubill/sd-webui-controlnet"
+
+        repo_dir = os.path.join(extension_dir, "sd-webui-controlnet")
+        if os.path.exists(repo_dir):
+            subprocess.run(["git", "pull"], check=True, cwd=repo_dir)
+        else:
+            subprocess.run(["git", "clone", repo_url], check=True, cwd=extension_dir)
+        
+        if not os.path.exists(controlnet_model_dir):
+            os.makedirs(controlnet_model_dir)
+        
+        model_base_url = "https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/"
+        models = ["control_v11f1e_sd15_tile.pth", "control_v11f1e_sd15_tile.yaml"]
+        for model in models:
+            if not os.path.exists(os.path.join(controlnet_model_dir, model)):
+                print("Downloading", model)
+                download_bigdata(f"{model_base_url}{model}", os.path.join(controlnet_model_dir, model))
+    
 
     def start_subprocess(self, path):
         print("start_subprocess", path)
