@@ -10,7 +10,6 @@ def home():
 
 
 def main():
-    print("run")
     app.run(debug=True, use_reloader=False)
 
 

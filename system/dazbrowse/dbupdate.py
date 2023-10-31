@@ -7,7 +7,10 @@ import webuiapi
 from PIL import Image
 import json
 import urllib.parse
+from dateutil import parser
+from googletrans import Translator
 from sdwebui_utils import SDWebUI
+import pickle
 from peewee import *
 
 
@@ -36,6 +39,42 @@ class DufModel(Model):
     file_date = DateTimeField(default=datetime.datetime.now)
     class Meta:
         database = db
+
+
+class CategoryModel(Model):
+    category = CharField(primary_key=True, unique=True)
+    category_jp = CharField()
+    class Meta:
+        database = db
+
+
+class ModelModel(Model):
+    model = CharField(primary_key=True, unique=True)
+    model_jp = CharField()
+    class Meta:
+        database = db
+
+
+class AssetTypeModel(Model):
+    asset_type = CharField(primary_key=True, unique=True)
+    asset_type_jp = CharField()
+    class Meta:
+        database = db
+
+
+class SubTypeModel(Model):
+    sub_type = CharField(primary_key=True, unique=True)
+    sub_type_jp = CharField()
+    class Meta:
+        database = db
+
+
+class ProductModel(Model):
+    product = CharField(primary_key=True, unique=True)
+    product_jp = CharField()
+    class Meta:
+        database = db
+
 
     
 def analyze_duf(base_dir, duf) -> str:
@@ -67,21 +106,22 @@ def analyze_duf(base_dir, duf) -> str:
     asset_type = json_data['asset_info']['type']
     product_date = json_data['asset_info']['modified']
 
-    png_path = os.path.splitext(duf_path)[0] + ".png"    
-    tip_png_path = os.path.splitext(duf_path)[0] + ".tip.png"
+    png_path = os.path.splitext(duf)[0] + ".png"    
+    tip_png_path = os.path.splitext(duf)[0] + ".tip.png"
     if os.path.exists(png_path) and not os.path.exists(tip_png_path):
-        extra_image(png_path)
+        #extra_image(png_path)
+        print("extra_image:", png_path)
     
     clip = ''
     deepdanbooru = ''
     if os.path.exists(tip_png_path):
-        clip = api.interrogate(image=Image.open(tip_png_path), model="clip").info
-        deepdanbooru = api.interrogate(image=Image.open(tip_png_path), model="deepdanbooru").info
+        #clip = api.interrogate(image=Image.open(tip_png_path), model="clip").info
+        #deepdanbooru = api.interrogate(image=Image.open(tip_png_path), model="deepdanbooru").info
         print("clip:", clip)
     else:
         print("Not found:", tip_png_path)
 
-    path_parts = id.split('/')
+    path_parts = os.path.abspath(duf).replace(os.path.abspath(base_dir), '').replace('\\', '/').split('/')
     category = path_parts[1] if len(path_parts) > 1 else ''
     model = path_parts[2] if len(path_parts) > 2 else ''
     sub_type = path_parts[3] if len(path_parts) > 3 else ''
@@ -115,7 +155,7 @@ def analyze_duf(base_dir, duf) -> str:
         product=product,
         product_detail=product_detail,
         update_date=datetime.datetime.now(),
-        product_date=datetime.datetime.strptime(product_date, "%Y-%m-%dT%H:%M:%SZ"),
+        product_date=parser.parse(product_date),
         file_date=datetime.datetime.fromtimestamp(os.path.getmtime(duf))
     )
 
@@ -143,8 +183,43 @@ def extra_image(filename):
     result = api.extra_single_image(image=src_img, upscaler_1="SwinIR 4x", upscaling_resize=4)
     result.image.save(dst)
 
+
+def save_memory(key, val):
+    pickle_file = 'memory.pkl'
+    if os.path.exists(pickle_file):
+        with open(pickle_file, 'rb') as f:
+            memory = pickle.load(f)
+    else:
+        memory = {}
+    memory[key] = val
+    with open(pickle_file, 'wb') as f:
+        pickle.dump(memory, f)
+
+
+def load_memory(key, defval=None):
+    pickle_file = 'memory.pkl'
+    if os.path.exists(pickle_file):
+        with open(pickle_file, 'rb') as f:
+            memory = pickle.load(f)
+    else:
+        memory = {}
+    return memory.get(key, defval)
+
+
+def insert_space_before_capital(s):
+    if not s:
+        return ""
+    result = [s[0]]
+    all_upper = s.isupper()
+    for char in s[1:]:
+        if char.isupper() and not all_upper and result[-1] != ' ':
+            result.append(' ')
+        result.append(char)
+    return ''.join(result)
+
     
 def main():
+    """
     print("Starting...")
     sdwebui = SDWebUI()
     print("download")
@@ -157,11 +232,46 @@ def main():
     sdwebui.install_cn()
     print("start")
     p = sdwebui.start()
+    print("wait_for_api")
+    sdwebui.wait_for_api()
+    """
 
+    print("analyze")
     db.connect()
-    db.create_tables([DufModel])
+    db.create_tables([DufModel, CategoryModel, ModelModel, AssetTypeModel, SubTypeModel, ProductModel])
 
-    base_dir = "D:\destdaz\\"
+    tr = Translator()
+
+    tableset = {
+        'model': ModelModel,
+        'category': CategoryModel,
+        'asset_type': AssetTypeModel,
+        'sub_type': SubTypeModel,
+        'product': ProductModel,
+    }
+
+    for key, val in tableset.items():
+        data = eval(f"DufModel.select(DufModel.{key}.distinct()).execute()")
+        print(key)
+        print(val.delete().execute())
+        for d in data:
+            result = eval(f"d.{key}")
+            try:
+                result_convert = result.replace('_', ' ').strip().replace('-', ' ').strip().replace('!', '').strip().replace('@', '').strip()
+                result_convert = insert_space_before_capital(result_convert)
+                result_jp = load_memory(result_convert)
+                if result_jp is None:
+                    result_jp = tr.translate(result_convert, dest='ja').text
+                    save_memory(result_convert, result_jp)
+            except Exception as e:
+                result_jp = result
+            print(eval(f"val.create({key}=result, {key}_jp=result_jp)"))
+
+    db.close()
+
+    return
+
+    base_dir = "D:\destdaz"
 
     people = os.path.join(base_dir, 'People')
 
@@ -175,10 +285,6 @@ def main():
             print(analyze_duf(base_dir, duf))
         except Exception as e:
             print(e)
-
-    for dufdata in DufModel.select():
-        print(dufdata.duf_path)
-        print(dufdata.clip)
 
     db.close()
 

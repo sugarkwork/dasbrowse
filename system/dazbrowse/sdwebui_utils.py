@@ -2,7 +2,25 @@ import os
 import subprocess
 import multiprocessing
 import threading
+import time
 from utils import download_bigdata, download_and_unzip
+
+
+def _print_log(log_queue, sdwebui):
+    while True:
+        while not log_queue.empty():
+            log_data = str(log_queue.get()).strip()
+            if 'Running on local URL' in log_data:
+                sdwebui.set_running(True)
+            print(log_data)
+        time.sleep(0.5)
+
+
+def print_output(stream, stdin, log_queue):
+    for line in stream:
+        log_queue.put(line)
+        if '...' in line:
+            stdin.write('\n')
 
 
 class SDWebUI:
@@ -13,6 +31,26 @@ class SDWebUI:
         self.temp_dir = "./temp/sdwebui"
         self.api = None
 
+        self._running = multiprocessing.Value('i', 0)
+
+        self._log = multiprocessing.Queue()
+        threading.Thread(target=_print_log, args=(self._log, self)).start()
+
+
+    def is_running(self) -> bool:
+        return self._running.value == 1
+    
+    def set_running(self, val: bool):
+        print("set_running", val)
+        self._running.value = 1 if val is True else 0
+    
+    def add_log(self, log: str):
+        self._log.put(log)
+    
+    def get_log(self) -> str:
+        if self._log.empty():
+            return ""
+        return self._log.get()
 
     def search_path(self, path):
         abspath = os.path.abspath(path)
@@ -42,12 +80,14 @@ class SDWebUI:
 
 
     def install_cn(self):
+        print("install_cn")
+
         extension_dir = os.path.abspath(os.path.join(self.temp_dir, "webui", "extensions"))
         controlnet_model_dir = os.path.abspath(os.path.join(self.temp_dir, "webui", "models", "ControlNet"))
-        print(extension_dir)
+        
         repo_url = "https://github.com/Mikubill/sd-webui-controlnet"
-
         repo_dir = os.path.join(extension_dir, "sd-webui-controlnet")
+
         if os.path.exists(repo_dir):
             subprocess.run(["git", "pull"], check=True, cwd=repo_dir)
         else:
@@ -63,6 +103,11 @@ class SDWebUI:
                 print("Downloading", model)
                 download_bigdata(f"{model_base_url}{model}", os.path.join(controlnet_model_dir, model))
     
+    def wait_for_api(self, timeout=100):
+        for _ in range(timeout):
+            if self.is_running():
+                break
+            time.sleep(1)
 
     def start_subprocess(self, path):
         print("start_subprocess", path)
@@ -74,21 +119,16 @@ class SDWebUI:
         os.environ["SD_WEBUI_RESTARTING"] = "1"
         process = subprocess.Popen(['cmd', '/C', executable], cwd=directory,
                                 stdout=subprocess.PIPE,
-                                stdin=subprocess.DEVNULL,
+                                stdin=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
                                 text=True, env=os.environ)
 
-        def print_output(stream):
-            for line in stream:
-                if stream is process.stdout:
-                    print(line.strip())
-                else:
-                    print("Error:", line.strip())
-
-        stdout_thread = threading.Thread(target=print_output, args=(process.stdout,))
-        stderr_thread = threading.Thread(target=print_output, args=(process.stderr,))
+        stdout_thread = threading.Thread(target=print_output, args=(process.stdout, process.stdin, self._log))
+        stderr_thread = threading.Thread(target=print_output, args=(process.stderr, process.stdin, self._log))
+        print("Starting subprocess")
         stdout_thread.start()
         stderr_thread.start()
+        print("Waiting for subprocess to finish")
         stdout_thread.join()
         stderr_thread.join()
 
@@ -109,10 +149,12 @@ class SDWebUI:
 
     def run(self):
         path = self.search_path(f"{self.temp_dir}/run.bat")
+        print("run: ", path)
         self.start_subprocess(path)
 
     def start(self):
-        p = multiprocessing.Process(target=self.run)
+        print("start", self.run)
+        p = threading.Thread(target=self.run)
         p.start()
         return p
 
