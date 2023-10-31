@@ -3,7 +3,6 @@ import datetime
 import os
 import glob
 import gzip
-import webuiapi
 from PIL import Image
 import json
 import urllib.parse
@@ -15,7 +14,6 @@ from peewee import *
 
 
 db = SqliteDatabase('duf.db')
-api = webuiapi.WebUIApi()
 
 
 class DufModel(Model):
@@ -162,7 +160,7 @@ def analyze_duf(base_dir, duf) -> str:
     return duf_path
     
 
-def extra_images(directory):
+def extra_images(sdwebui, directory):
     for filename in os.listdir(directory):
         if filename.endswith(".png") and not filename.endswith(".tip.png"):
             base_filename = os.path.splitext(filename)[0]
@@ -170,17 +168,17 @@ def extra_images(directory):
             if os.path.exists(os.path.join(directory, tip_filename)):
                 continue
 
-            extra_image(os.path.join(directory, filename))
+            extra_image(sdwebui, os.path.join(directory, filename))
 
 
-def extra_image(filename):
+def extra_image(sdwebui, filename):
     directory = os.path.dirname(filename)
     base_filename = os.path.splitext(filename)[0]
     tip_filename = base_filename + ".tip.png"
     dst = os.path.join(directory, tip_filename)
 
     src_img = Image.open(filename)
-    result = api.extra_single_image(image=src_img, upscaler_1="SwinIR 4x", upscaling_resize=4)
+    result = sdwebui.api.extra_single_image(image=src_img, upscaler_1="SwinIR_4x", upscaling_resize=4)
     result.image.save(dst)
 
 
@@ -217,29 +215,9 @@ def insert_space_before_capital(s):
         result.append(char)
     return ''.join(result)
 
+
+def update_category():
     
-def main():
-    """
-    print("Starting...")
-    sdwebui = SDWebUI()
-    print("download")
-    sdwebui.download()
-    print("update")
-    sdwebui.update()
-    print("change_config")
-    sdwebui.change_config()
-    print("install_cn")
-    sdwebui.install_cn()
-    print("start")
-    p = sdwebui.start()
-    print("wait_for_api")
-    sdwebui.wait_for_api()
-    """
-
-    print("analyze")
-    db.connect()
-    db.create_tables([DufModel, CategoryModel, ModelModel, AssetTypeModel, SubTypeModel, ProductModel])
-
     tr = Translator()
 
     tableset = {
@@ -256,23 +234,20 @@ def main():
         print(val.delete().execute())
         for d in data:
             result = eval(f"d.{key}")
+            result_convert = result.replace('_', ' ').strip().replace('-', ' ').strip().replace('!', '').strip().replace('@', '').strip()
+            result_convert = insert_space_before_capital(result_convert)
             try:
-                result_convert = result.replace('_', ' ').strip().replace('-', ' ').strip().replace('!', '').strip().replace('@', '').strip()
-                result_convert = insert_space_before_capital(result_convert)
                 result_jp = load_memory(result_convert)
                 if result_jp is None:
                     result_jp = tr.translate(result_convert, dest='ja').text
                     save_memory(result_convert, result_jp)
             except Exception as e:
                 result_jp = result
+                save_memory(result_convert, result_jp)
             print(eval(f"val.create({key}=result, {key}_jp=result_jp)"))
 
-    db.close()
 
-    return
-
-    base_dir = "D:\destdaz"
-
+def duf_analyze(base_dir):
     people = os.path.join(base_dir, 'People')
 
     dufs = glob.glob(os.path.join(people, '**', '*.duf'), recursive=True)
@@ -286,10 +261,76 @@ def main():
         except Exception as e:
             print(e)
 
-    db.close()
+
+def start_sdwebui():
+    sdwebui = SDWebUI()
+    print("download")
+    sdwebui.download()
+    print("update")
+    sdwebui.update()
+    print("change_config")
+    sdwebui.change_config()
+    print("install_cn")
+    sdwebui.install_cn()
+    print("start")
+    p = sdwebui.start()
+    print("wait_for_api")
+    sdwebui.wait_for_api()
+
+    return sdwebui, p
+
+    
+def main():
+    print("Starting...")
+    sdwebui, p = start_sdwebui()
+
+    print("analyze")
+    db.connect()
+    db.create_tables([DufModel, CategoryModel, ModelModel, AssetTypeModel, SubTypeModel, ProductModel])
+
+    try:
+        #duf_analyze("D:\destdaz")
+
+        result = DufModel.select().where(DufModel.clip == '' or DufModel.deepdanbooru == '').execute()
+
+        count = 0
+        for r in result:
+
+            print(f"[{count}/{len(result)}]")
+            count += 1
+
+            print(r.png_path)
+            
+            if os.path.exists(r.png_path) and not os.path.exists(r.tip_png_path):
+                extra_image(sdwebui, r.png_path)
+                print("extra_image:", r.png_path)
+            
+            clip = ''
+            deepdanbooru = ''
+            if os.path.exists(r.tip_png_path):
+                tip_image = Image.open(r.tip_png_path)
+                clip = sdwebui.api.interrogate(image=tip_image, model="clip").info
+                deepdanbooru = sdwebui.api.interrogate(image=tip_image, model="deepdanbooru").info
+                
+                print("clip:", clip)
+                print("deepdanbooru:", deepdanbooru)
+
+                r.clip = clip
+                r.deepdanbooru = deepdanbooru
+                r.save()
+
+            else:
+                print("Not found:", r.tip_png_path)
+
+        #update_category()
+    except Exception as e:
+        print(e)
+
+    finally:
+        db.close()
 
     print("terminate")
-    p.terminate()
+
     p.join()
 
 

@@ -1,26 +1,32 @@
 import os
 import subprocess
-import multiprocessing
-import threading
+from threading import Thread, Lock, Event
 import time
 from utils import download_bigdata, download_and_unzip
+import webuiapi
 
 
-def _print_log(log_queue, sdwebui):
+def _print_log(log_queue, sdwebui, exit_flag):
     while True:
-        while not log_queue.empty():
-            log_data = str(log_queue.get()).strip()
-            if 'Running on local URL' in log_data:
+        while len(log_queue) > 0:
+            log_data = str(log_queue.pop(0)).strip()
+            if 'Running on local URL' in log_data or 'Loading weights' in log_data:
+                time.sleep(5)
                 sdwebui.set_running(True)
             print(log_data)
         time.sleep(0.5)
+        if exit_flag.is_set():
+            break
 
 
-def print_output(stream, stdin, log_queue):
+def print_output(stream, stdin, log_queue, exit_flag):
     for line in stream:
-        log_queue.put(line)
-        if '...' in line:
+        log_queue.append(line)
+        if '.' in line:
             stdin.write('\n')
+            stdin.flush()
+        if exit_flag.is_set():
+            break
 
 
 class SDWebUI:
@@ -29,28 +35,31 @@ class SDWebUI:
         self.model_url = "https://huggingface.co/sugarknight/test_real/resolve/main/bb_mix2.safetensors"
         self.default_model = "./temp/sdwebui/webui/models/Stable-diffusion/bb_mix2.safetensors"
         self.temp_dir = "./temp/sdwebui"
-        self.api = None
+        self.api = webuiapi.WebUIApi()
 
-        self._running = multiprocessing.Value('i', 0)
-
-        self._log = multiprocessing.Queue()
-        threading.Thread(target=_print_log, args=(self._log, self)).start()
-
+        self._running = 0
+        self._running_lock = Lock()
+        self._log = []
+        self._log_lock = Lock()
 
     def is_running(self) -> bool:
-        return self._running.value == 1
+        with self._running_lock:
+            return self._running == 1
     
     def set_running(self, val: bool):
-        print("set_running", val)
-        self._running.value = 1 if val is True else 0
+        with self._running_lock:
+            print("set_running", val)
+            self._running = 1 if val is True else 0
     
     def add_log(self, log: str):
-        self._log.put(log)
+        with self._log_lock:
+            self._log.append(log)
     
     def get_log(self) -> str:
-        if self._log.empty():
-            return ""
-        return self._log.get()
+        with self._log_lock:
+            if len(self._log) == 0:
+                return ""
+            return self._log.pop(0)
 
     def search_path(self, path):
         abspath = os.path.abspath(path)
@@ -114,7 +123,9 @@ class SDWebUI:
         if not os.path.exists(path):
             print("Error: The specified path does not exist:", path)
             return
-        
+
+        exit_flag = Event()
+
         directory, executable = os.path.split(path)
         os.environ["SD_WEBUI_RESTARTING"] = "1"
         process = subprocess.Popen(['cmd', '/C', executable], cwd=directory,
@@ -123,14 +134,23 @@ class SDWebUI:
                                 stderr=subprocess.PIPE,
                                 text=True, env=os.environ)
 
-        stdout_thread = threading.Thread(target=print_output, args=(process.stdout, process.stdin, self._log))
-        stderr_thread = threading.Thread(target=print_output, args=(process.stderr, process.stdin, self._log))
+        stdout_thread = Thread(target=print_output, args=(process.stdout, process.stdin, self._log, exit_flag))
+        stderr_thread = Thread(target=print_output, args=(process.stderr, process.stdin, self._log, exit_flag))
+        logwatcher_thread = Thread(target=_print_log, args=(self._log, self, exit_flag))
+
         print("Starting subprocess")
         stdout_thread.start()
         stderr_thread.start()
+        logwatcher_thread.start()
+
         print("Waiting for subprocess to finish")
+        process.wait()
+        exit_flag.set()
+
+        print("Waiting for thread to finish")
         stdout_thread.join()
         stderr_thread.join()
+        logwatcher_thread.join()
 
         return_code = process.poll()
         print("Return code:", return_code)
@@ -154,7 +174,7 @@ class SDWebUI:
 
     def start(self):
         print("start", self.run)
-        p = threading.Thread(target=self.run)
+        p = Thread(target=self.run)
         p.start()
         return p
 
