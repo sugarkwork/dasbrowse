@@ -1,5 +1,6 @@
 import os
 import subprocess
+import socket
 from threading import Thread, Lock, Event
 import time
 from utils import download_bigdata, download_and_unzip
@@ -9,11 +10,19 @@ import webuiapi
 def _print_log(log_queue, sdwebui, exit_flag):
     while True:
         while len(log_queue) > 0:
+
             log_data = str(log_queue.pop(0)).strip()
             if 'Running on local URL' in log_data or 'Loading weights' in log_data:
-                time.sleep(5)
+                time.sleep(10)
                 sdwebui.set_running(True)
-            print(log_data)
+
+            if '続行するには' in log_data:
+                continue
+            if 'Press any key' in log_data:
+                continue
+
+            print(log_data) 
+
         time.sleep(0.5)
         if exit_flag.is_set():
             break
@@ -35,7 +44,7 @@ class SDWebUI:
         self.model_url = "https://huggingface.co/sugarknight/test_real/resolve/main/bb_mix2.safetensors"
         self.default_model = "./temp/sdwebui/webui/models/Stable-diffusion/bb_mix2.safetensors"
         self.temp_dir = "./temp/sdwebui"
-        self.api = webuiapi.WebUIApi()
+        self.apis = []
 
         self._running = 0
         self._running_lock = Lock()
@@ -167,15 +176,24 @@ class SDWebUI:
         if not os.path.exists(self.default_model):
             download_bigdata(self.model_url, self.default_model)
 
-    def run(self):
-        path = self.search_path(f"{self.temp_dir}/run.bat")
+    def run(self, run_script):
+        path = self.search_path(run_script)
         print("run: ", path)
         self.start_subprocess(path)
 
-    def start(self):
+    def start(self, devices: list):
         print("start", self.run)
-        p = Thread(target=self.run)
-        p.start()
+        self.apis = []
+        default_port = 8000
+        for device in devices:
+            port = self.get_unused_port(start_port=default_port)
+            default_port = port + 1
+
+            self.apis.append(webuiapi.WebUIApi(port=port))
+            run_script = self.change_run_config(device, port)
+            print("run_script", run_script)
+            p = Thread(target=self.run, args=(run_script, ))
+            p.start()
         return p
 
     def change_config(self):
@@ -187,7 +205,6 @@ class SDWebUI:
         options = ['--api']
         update_file = False
         for i, line in enumerate(lines):
-            print(line)
             if 'COMMANDLINE_ARGS' in line:
                 for option in options:
                     if option in line:
@@ -199,4 +216,68 @@ class SDWebUI:
         if update_file:
             with open(file_path, 'w', encoding='utf-8') as file:
                 file.writelines(lines)
+    
 
+    def change_cuda_config(self, device: str, port: int):
+        file_path = f'{self.temp_dir}/webui/webui-user.bat'
+
+        with open(file_path, 'r', encoding='utf-8') as file:
+            lines = file.readlines()
+        
+        new_lines = []
+        for i, line in enumerate(lines):
+            if 'COMMANDLINE_ARGS' in line:
+                new_lines.append(f'{lines[i].strip()} --port {port}\n')
+                new_lines.append(f'set CUDA_VISIBLE_DEVICES={device}\n')
+                continue
+
+            new_lines.append(lines[i].strip() + '\n')
+
+        result_file_path = f"{os.path.splitext(file_path)[0]}_{device}_{port}.bat"
+        with open(result_file_path, 'w', encoding='utf-8') as file:
+            file.writelines(new_lines)
+        
+        return result_file_path
+
+
+    def change_run_config(self, device: str, port: int):
+        file_path = f'{self.temp_dir}/run.bat'
+
+        with open(file_path, 'r', encoding='utf-8') as file:
+            lines = file.readlines()
+        
+        cuda_config_fullpath = self.change_cuda_config(device, port)
+        cuda_config_name = os.path.basename(cuda_config_fullpath)
+
+        new_lines = []
+        for i, line in enumerate(lines):
+            if 'call webui-user.bat' in line:
+                new_lines.append(f'call {cuda_config_name}\n')
+                continue
+
+            new_lines.append(lines[i].strip() + '\n')
+
+        result_file_path = f"{os.path.splitext(file_path)[0]}_{device}_{port}.bat"
+        with open(result_file_path, 'w', encoding='utf-8') as file:
+            file.writelines(new_lines)
+        
+        return result_file_path
+
+
+    def find_unused_port(self, start_port, end_port):
+        for port in range(start_port, end_port+1):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("localhost", port))
+                    return port
+                except socket.error:
+                    continue
+        return None
+
+
+    def get_unused_port(self, start_port = 8000, end_port = 9000):
+        unused_port = self.find_unused_port(start_port, end_port)
+        if unused_port is not None:
+            return unused_port
+        else:
+            return None

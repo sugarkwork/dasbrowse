@@ -1,25 +1,150 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
+
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Display</title>
+    <title>DAZ Search</title>
     <style>
         body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
+            font-family: Arial, sans-serif;
             margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
         }
-        img {
-            max-width: 100%;
-            max-height: 100%;
+
+        .search-container {
+            padding: 20px;
+            background-color: white;
+        }
+
+        .search-box {
+            width: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+            margin-bottom: 20px;
+        }
+
+        .dropdowns {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .dropdowns select {
+            width: 18%;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .results {
+            display: flex;
+            flex-wrap: wrap;
+            padding: 20px;
+            gap: 20px;
+            justify-content: space-around;
+        }
+
+        .result {
+            text-align: center;
+        }
+
+        .result img {
+            max-width: 100px;
+            max-height: 100px;
+        }
+
+        .result p {
+            margin-top: 10px;
         }
     </style>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script>
+        $(document).ready(function () {
+            // ドロップダウンが変更されたときのイベントハンドラ
+            $('.dropdowns select').change(function () {
+                var dropdown = $(this); // 変更されたドロップダウン
+                var selectedName = dropdown.attr('name'); // 変更されたドロップダウンのname属性
+                var selectedValue = dropdown.val(); // 選択された値
+                data = JSON.stringify({ [selectedName] : selectedValue });
+                alert(data);
+
+                // サーバーにPOSTリクエストを送信
+                $.ajax({
+                    url: '/dropdown/' + selectedName, // サーバーのエンドポイントURL
+                    type: 'POST',
+                    dataType: "json",
+                    contentType: 'application/json',
+                    data: data,
+                    success: function (response) {
+                        $('.dropdowns select').not(dropdown).each(function () {
+                            var otherDropdown = $(this);
+                            var newOptions = response[otherDropdown.attr('name')];
+                            if (newOptions) {
+                                otherSelected = otherDropdown.selectedValue
+                                otherDropdown.empty();
+                                otherDropdown.append(new Option('', ''));
+                                newOptions.forEach(function (option) {
+                                    if (option == otherSelected) {
+                                        otherDropdown.append(new Option(option, option, true, true));
+                                    } else {
+                                        otherDropdown.append(new Option(option, option));
+                                    }
+                                });
+                            }
+                        });
+                    },
+                    error: function (error) {
+                        console.error('Error during AJAX request', error);
+                    }
+                });
+            });
+        });
+    </script>
 </head>
+
 <body>
-    <img src="{{ image_url }}" alt="Image">
+
+    <div class="search-container">
+        <input type="text" class="search-box" placeholder="検索...">
+        <div class="dropdowns">
+            <select name="category">
+                <option value=""></option>
+                {%for i in range(0, category_len)%}<option value="{{category[i].category}}">{{category[i].category}}
+                    ({{category[i].category_jp}})</option>{%endfor%}
+            </select>
+            <select name="model">
+                <option value=""></option>
+                {%for i in range(0, model_len)%}<option value="{{model[i].model}}">{{model[i].model}}
+                    ({{model[i].model_jp}})</option>{%endfor%}
+            </select>
+            <select name="asset_type">
+                <option value=""></option>
+                {%for i in range(0, asset_type_len)%}<option value="{{asset_type[i].asset_type}}">
+                    {{asset_type[i].asset_type}} ({{asset_type[i].asset_type_jp}})</option>{%endfor%}
+            </select>
+            <select name="sub_type">
+                <option value=""></option>
+                {%for i in range(0, sub_type_len)%}<option value="{{sub_type[i].sub_type}}">{{sub_type[i].sub_type}}
+                    ({{sub_type[i].sub_type_jp}})</option>{%endfor%}
+            </select>
+            <select name="product">
+                <option value=""></option>
+                {%for i in range(0, product_len)%}<option value="{{product[i].product}}">{{product[i].product}}
+                    ({{product[i].product_jp}})</option>{%endfor%}
+            </select>
+
+        </div>
+    </div>
+
+    <div class="results">
+
+        <div class="result">
+            <img src="{{ image_url }}" alt="アイコン1">
+            <p>アイテム1</p>
+        </div>
+
+    </div>
+
 </body>
+
 </html>

@@ -5,74 +5,18 @@ import glob
 import gzip
 from PIL import Image
 import json
+import time
+import queue
+import threading
+from collections import deque
+from datetime import timedelta
 import urllib.parse
 from dateutil import parser
 from googletrans import Translator
 from sdwebui_utils import SDWebUI
 import pickle
 from peewee import *
-
-
-db = SqliteDatabase('duf.db')
-
-
-class DufModel(Model):
-    duf = CharField(primary_key=True, unique=True)
-    duf_path = CharField()
-    id = CharField()
-    png_path = CharField()
-    tip_png_path = CharField()
-    author = CharField()
-    asset_type = CharField()
-    clip = CharField()
-    deepdanbooru = CharField()
-    category = CharField()
-    model = CharField()
-    sub_type = CharField()
-    name = CharField()
-    product = CharField()
-    product_detail = CharField()
-    update_date = DateTimeField(default=datetime.datetime.now)
-    product_date = DateTimeField(default=datetime.datetime.now)
-    file_date = DateTimeField(default=datetime.datetime.now)
-    class Meta:
-        database = db
-
-
-class CategoryModel(Model):
-    category = CharField(primary_key=True, unique=True)
-    category_jp = CharField()
-    class Meta:
-        database = db
-
-
-class ModelModel(Model):
-    model = CharField(primary_key=True, unique=True)
-    model_jp = CharField()
-    class Meta:
-        database = db
-
-
-class AssetTypeModel(Model):
-    asset_type = CharField(primary_key=True, unique=True)
-    asset_type_jp = CharField()
-    class Meta:
-        database = db
-
-
-class SubTypeModel(Model):
-    sub_type = CharField(primary_key=True, unique=True)
-    sub_type_jp = CharField()
-    class Meta:
-        database = db
-
-
-class ProductModel(Model):
-    product = CharField(primary_key=True, unique=True)
-    product_jp = CharField()
-    class Meta:
-        database = db
-
+from mydb import *
 
     
 def analyze_duf(base_dir, duf) -> str:
@@ -160,7 +104,7 @@ def analyze_duf(base_dir, duf) -> str:
     return duf_path
     
 
-def extra_images(sdwebui, directory):
+def extra_images(api, directory):
     for filename in os.listdir(directory):
         if filename.endswith(".png") and not filename.endswith(".tip.png"):
             base_filename = os.path.splitext(filename)[0]
@@ -168,17 +112,17 @@ def extra_images(sdwebui, directory):
             if os.path.exists(os.path.join(directory, tip_filename)):
                 continue
 
-            extra_image(sdwebui, os.path.join(directory, filename))
+            extra_image(api, os.path.join(directory, filename))
 
 
-def extra_image(sdwebui, filename):
+def extra_image(api, filename):
     directory = os.path.dirname(filename)
     base_filename = os.path.splitext(filename)[0]
     tip_filename = base_filename + ".tip.png"
     dst = os.path.join(directory, tip_filename)
 
     src_img = Image.open(filename)
-    result = sdwebui.api.extra_single_image(image=src_img, upscaler_1="SwinIR_4x", upscaling_resize=4)
+    result = api.extra_single_image(image=src_img, upscaler_1="SwinIR_4x", upscaling_resize=4)
     result.image.save(dst)
 
 
@@ -262,7 +206,7 @@ def duf_analyze(base_dir):
             print(e)
 
 
-def start_sdwebui():
+def start_sdwebui(devices=[0]):
     sdwebui = SDWebUI()
     print("download")
     sdwebui.download()
@@ -273,7 +217,7 @@ def start_sdwebui():
     print("install_cn")
     sdwebui.install_cn()
     print("start")
-    p = sdwebui.start()
+    p = sdwebui.start(devices=devices)
     print("wait_for_api")
     sdwebui.wait_for_api()
 
@@ -281,8 +225,10 @@ def start_sdwebui():
 
     
 def main():
+    cuda_devices = [0, 1]
+
     print("Starting...")
-    sdwebui, p = start_sdwebui()
+    sdwebui, p = start_sdwebui(cuda_devices)
 
     print("analyze")
     db.connect()
@@ -293,34 +239,64 @@ def main():
 
         result = DufModel.select().where(DufModel.clip == '' or DufModel.deepdanbooru == '').execute()
 
-        count = 0
-        for r in result:
+        task_queue = queue.Queue()
 
-            print(f"[{count}/{len(result)}]")
-            count += 1
-
-            print(r.png_path)
-            
-            if os.path.exists(r.png_path) and not os.path.exists(r.tip_png_path):
-                extra_image(sdwebui, r.png_path)
-                print("extra_image:", r.png_path)
-            
-            clip = ''
-            deepdanbooru = ''
-            if os.path.exists(r.tip_png_path):
-                tip_image = Image.open(r.tip_png_path)
-                clip = sdwebui.api.interrogate(image=tip_image, model="clip").info
-                deepdanbooru = sdwebui.api.interrogate(image=tip_image, model="deepdanbooru").info
+        def worker(i):
+            while True:
+                r = task_queue.get()
+                print(r.png_path)
+                if os.path.exists(r.png_path) and not os.path.exists(r.tip_png_path):
+                    extra_image(sdwebui.apis[i], r.png_path)
+                    print("extra_image:", r.png_path)
                 
-                print("clip:", clip)
-                print("deepdanbooru:", deepdanbooru)
+                if os.path.exists(r.tip_png_path):
+                    tip_image = Image.open(r.tip_png_path)
+                    clip = sdwebui.apis[i].interrogate(image=tip_image, model="clip").info
+                    deepdanbooru = sdwebui.apis[i].interrogate(image=tip_image, model="deepdanbooru").info
 
-                r.clip = clip
-                r.deepdanbooru = deepdanbooru
-                r.save()
+                    print("clip:", clip)
+                    print("deepdanbooru:", deepdanbooru)
 
-            else:
-                print("Not found:", r.tip_png_path)
+                    r.clip = clip
+                    r.deepdanbooru = deepdanbooru
+                    r.save()
+
+                else:
+                    print("Not found:", r.tip_png_path)
+        
+        count_thread = len(cuda_devices)
+
+        for i in range(count_thread):
+            p = threading.Thread(target=worker, args=(i,))
+            p.start()
+        
+        recent_durations = deque(maxlen=10)
+        total_record = len(result)
+        count = 0
+        start_time = time.time()
+
+        for r in result:
+            if not os.path.exists(r.png_path):
+                continue
+
+            if task_queue.qsize() < count_thread:
+                print("add queue", r)
+                task_queue.put(r)
+
+                duration = time.time() - start_time
+                recent_durations.append(duration)
+                count = count + 1 
+                remaining_data = total_record - count
+                avg_duration = sum(recent_durations) / len(recent_durations)
+                remaining_time = avg_duration * remaining_data
+                remaining_time_str = str(timedelta(seconds=int(remaining_time)))
+                
+                print(f"Processed: {count}/{total_record}, Remaining Time: {remaining_time_str}")
+
+                start_time = time.time()
+
+            time.sleep(0.1)
+
 
         #update_category()
     except Exception as e:
