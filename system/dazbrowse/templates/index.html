@@ -49,6 +49,8 @@
         }
 
         .result img {
+            min-width: 100px;
+            min-height: 100px;
             max-width: 100px;
             max-height: 100px;
         }
@@ -89,7 +91,7 @@
                     var resultDiv = $('<div class="result"></div>');
                     var link = $('<a></a>').attr('href', item.url);
                     var img = $('<img>').attr('src', item.img).attr('alt', item.duf).attr('title', item.duf).attr('loading', 'lazy');;
-                    var p = $('<p></p>').text(item.name);
+                    var p = $('<p></p>').text(item.name_short).attr('title', item.name);
 
                     link.append(img);
                     link.append(p);

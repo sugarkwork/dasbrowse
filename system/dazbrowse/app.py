@@ -1,5 +1,5 @@
 import json
-from googletrans import Translator
+import subprocess
 from mydb import *
 from flask import Flask, render_template, request, send_file
 
@@ -47,6 +47,13 @@ def get_dropdown(dropdown_name):
         })
 
 
+def cut_string(s):
+    if len(s) > 13:
+        return s[:13] + "..."
+    else:
+        return s
+
+
 @app.route('/search', methods=['GET', 'POST'])
 def get_result():
     print(request.json)
@@ -54,24 +61,24 @@ def get_result():
     query = ""
     if "query" in request.json:
         q = str(request.json['query']).strip().lower()
-        query = f"and ( fn.LOWER(DufModel.clip).contains('{q}') or fn.LOWER(DufModel.deepdanbooru).contains('{q}') or fn.LOWER(DufModel.duf).contains('{q}') ) "
-    category = f"and DufModel.category == '{request.json['category']}' " if 'category' in request.json and len(request.json['category']) > 0 else ''
-    model = f"and DufModel.model == '{request.json['model']}' " if 'model' in request.json and len(request.json['model']) > 0 else ''
-    asset_type = f"and DufModel.asset_type == '{request.json['asset_type']}' " if 'asset_type' in request.json and len(request.json['asset_type']) > 0 else ''
-    sub_type = f"and DufModel.sub_type == '{request.json['sub_type']}' " if 'sub_type' in request.json and len(request.json['sub_type']) > 0 else ''
-    product = f"and DufModel.product == '{request.json['product']}' " if 'product' in request.json and len(request.json['product']) > 0 else ''
+        query = f"& ( ( fn.LOWER(DufModel.clip).contains('{q}') ) | ( fn.LOWER(DufModel.deepdanbooru).contains('{q}') ) | ( fn.LOWER(DufModel.duf).contains('{q}') ) ) "
+    category = f"& ( DufModel.category == '{request.json['category']}' ) " if 'category' in request.json and len(request.json['category']) > 0 else ''
+    model = f"& ( DufModel.model == '{request.json['model']}' ) " if 'model' in request.json and len(request.json['model']) > 0 else ''
+    asset_type = f"& ( DufModel.asset_type == '{request.json['asset_type']}' ) " if 'asset_type' in request.json and len(request.json['asset_type']) > 0 else ''
+    sub_type = f"& ( DufModel.sub_type == '{request.json['sub_type']}' ) " if 'sub_type' in request.json and len(request.json['sub_type']) > 0 else ''
+    product = f"& ( DufModel.product == '{request.json['product']}' ) " if 'product' in request.json and len(request.json['product']) > 0 else ''
 
     query = (
-        "DufModel.select().where(DufModel.tip_png_path != '' "
+        "DufModel.select().where( ( DufModel.tip_png_path != '' ) "
         + category + model + asset_type + sub_type + product + query +
-        ').order_by(DufModel.name.asc()).limit(200).execute()')
+        ').order_by(DufModel.duf.asc()).limit(300).execute()')
     
     print(query)
     
     result = eval(query)
     return_data = []
     for r in result:
-        return_data.append({'url': f'/image/{r.hash}', 'name': r.name, 'img': f'/image/{r.hash}/image.png', 'duf': r.duf})
+        return_data.append({'url': f'/open/{r.hash}', 'name_short': cut_string(r.name), 'name': r.name, 'img': f'/image/{r.hash}/image.png', 'duf': r.duf})
 
     return json.dumps(return_data)
 
@@ -80,6 +87,15 @@ def get_result():
 def get_image(image_hash):
     result = DufModel.select(DufModel.tip_png_path, DufModel.hash).where(DufModel.hash == image_hash).get()
     return send_file(result.tip_png_path, mimetype='image/png')
+
+
+@app.route('/open/<image_hash>')
+def open_duf(image_hash):
+    result = DufModel.select(DufModel.duf).where(DufModel.hash == image_hash).get()
+    cmd = ["start", "", f'{result.duf}']
+    print(cmd)
+    subprocess.Popen(cmd, shell=True)
+    return json.dumps({'start': cmd})
 
 
 def main():
