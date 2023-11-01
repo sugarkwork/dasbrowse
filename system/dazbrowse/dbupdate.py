@@ -3,13 +3,14 @@ import datetime
 import os
 import glob
 import gzip
-from PIL import Image
+from PIL import Image, ImageFile
 import json
 import time
 import queue
 import threading
 from collections import deque
 from datetime import timedelta
+import hashlib
 import urllib.parse
 from dateutil import parser
 from googletrans import Translator
@@ -18,8 +19,10 @@ import pickle
 from peewee import *
 from mydb import *
 
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
     
-def analyze_duf(base_dir, duf) -> str:
+def analyze_duf(api, base_dir, duf) -> str:
     json_data = None
     
     if json_data is None:
@@ -51,17 +54,21 @@ def analyze_duf(base_dir, duf) -> str:
     png_path = os.path.splitext(duf)[0] + ".png"    
     tip_png_path = os.path.splitext(duf)[0] + ".tip.png"
     if os.path.exists(png_path) and not os.path.exists(tip_png_path):
-        #extra_image(png_path)
+        extra_image(api, png_path)
         print("extra_image:", png_path)
     
     clip = ''
     deepdanbooru = ''
     if os.path.exists(tip_png_path):
-        #clip = api.interrogate(image=Image.open(tip_png_path), model="clip").info
-        #deepdanbooru = api.interrogate(image=Image.open(tip_png_path), model="deepdanbooru").info
+        clip = api.interrogate(image=Image.open(tip_png_path), model="clip").info
+        deepdanbooru = api.interrogate(image=Image.open(tip_png_path), model="deepdanbooru").info
         print("clip:", clip)
     else:
         print("Not found:", tip_png_path)
+        tip_png_path = ""
+    
+    if not os.path.exists(png_path):
+        png_path = ""
 
     path_parts = os.path.abspath(duf).replace(os.path.abspath(base_dir), '').replace('\\', '/').split('/')
     category = path_parts[1] if len(path_parts) > 1 else ''
@@ -82,6 +89,7 @@ def analyze_duf(base_dir, duf) -> str:
 
     DufModel.create(
         duf=duf,
+        hash = hashlib.sha256(duf.encode()).hexdigest(),
         duf_path=duf_path,
         id=id,
         png_path=png_path,
@@ -124,28 +132,6 @@ def extra_image(api, filename):
     src_img = Image.open(filename)
     result = api.extra_single_image(image=src_img, upscaler_1="SwinIR_4x", upscaling_resize=4)
     result.image.save(dst)
-
-
-def save_memory(key, val):
-    pickle_file = 'memory.pkl'
-    if os.path.exists(pickle_file):
-        with open(pickle_file, 'rb') as f:
-            memory = pickle.load(f)
-    else:
-        memory = {}
-    memory[key] = val
-    with open(pickle_file, 'wb') as f:
-        pickle.dump(memory, f)
-
-
-def load_memory(key, defval=None):
-    pickle_file = 'memory.pkl'
-    if os.path.exists(pickle_file):
-        with open(pickle_file, 'rb') as f:
-            memory = pickle.load(f)
-    else:
-        memory = {}
-    return memory.get(key, defval)
 
 
 def insert_space_before_capital(s):
@@ -227,12 +213,23 @@ def start_sdwebui(devices=[0]):
 def main():
     cuda_devices = [0, 1]
 
+    db.connect()
+    db.create_tables([DufModel, CategoryModel, ModelModel, AssetTypeModel, SubTypeModel, ProductModel])
+
+    """
+    for r in DufModel.select().execute():
+        if not os.path.exists(r.tip_png_path):
+            r.tip_png_path = ""
+
+            r.save()
+
+    return
+    """
+
     print("Starting...")
     sdwebui, p = start_sdwebui(cuda_devices)
 
     print("analyze")
-    db.connect()
-    db.create_tables([DufModel, CategoryModel, ModelModel, AssetTypeModel, SubTypeModel, ProductModel])
 
     try:
         #duf_analyze("D:\destdaz")
@@ -250,7 +247,11 @@ def main():
                     print("extra_image:", r.png_path)
                 
                 if os.path.exists(r.tip_png_path):
-                    tip_image = Image.open(r.tip_png_path)
+                    try:
+                        tip_image = Image.open(r.tip_png_path)
+                    except Exception as ex:
+                        print(ex)
+                        continue
                     clip = sdwebui.apis[i].interrogate(image=tip_image, model="clip").info
                     deepdanbooru = sdwebui.apis[i].interrogate(image=tip_image, model="deepdanbooru").info
 
@@ -270,7 +271,7 @@ def main():
             p = threading.Thread(target=worker, args=(i,))
             p.start()
         
-        recent_durations = deque(maxlen=10)
+        recent_durations = deque(maxlen=30)
         total_record = len(result)
         count = 0
         start_time = time.time()

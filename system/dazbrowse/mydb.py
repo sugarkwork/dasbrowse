@@ -1,13 +1,14 @@
 import datetime
+import pickle
 from peewee import *
-from playhouse.pool import PooledSqliteDatabase
 
 
-db = PooledSqliteDatabase('duf.db', max_connections=5)
+db = SqliteDatabase('duf.db')
 
 
 class DufModel(Model):
     duf = CharField(primary_key=True, unique=True)
+    hash = CharField()
     duf_path = CharField()
     id = CharField()
     png_path = CharField()
@@ -62,3 +63,25 @@ class ProductModel(Model):
     product_jp = CharField()
     class Meta:
         database = db
+
+
+def save_memory(key, val):
+    pickle_file = 'memory.pkl'
+    if os.path.exists(pickle_file):
+        with open(pickle_file, 'rb') as f:
+            memory = pickle.load(f)
+    else:
+        memory = {}
+    memory[key] = val
+    with open(pickle_file, 'wb') as f:
+        pickle.dump(memory, f)
+
+
+def load_memory(key, defval=None):
+    pickle_file = 'memory.pkl'
+    if os.path.exists(pickle_file):
+        with open(pickle_file, 'rb') as f:
+            memory = pickle.load(f)
+    else:
+        memory = {}
+    return memory.get(key, defval)

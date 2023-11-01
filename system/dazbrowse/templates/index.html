@@ -60,13 +60,82 @@
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <script>
         $(document).ready(function () {
+
+            // タイマーIDを格納する変数
+            var searchTimer;
+
+            function set_mytimer() {
+                // 以前に設定されたタイマーがあればクリア
+                clearTimeout(searchTimer);
+
+                // タイマーを設定 (0.8秒後に実行)
+                searchTimer = setTimeout(function () {
+                    // 検索を実行する関数を呼び出し
+                    performSearch();
+                }, 800);
+            }
+
+            // 検索ボックスの入力イベントハンドラ
+            $('.search-box').on('input', function () {
+                set_mytimer();
+            });
+
+            function updateResults(data) {
+                // resultsクラスを持つdiv要素をクリア
+                $('.results').empty();
+
+                // JSONデータを元に要素を生成して追加
+                data.forEach(function (item) {
+                    var resultDiv = $('<div class="result"></div>');
+                    var link = $('<a></a>').attr('href', item.url);
+                    var img = $('<img>').attr('src', item.img).attr('alt', item.duf).attr('title', item.duf).attr('loading', 'lazy');;
+                    var p = $('<p></p>').text(item.name);
+
+                    link.append(img);
+                    link.append(p);
+                    resultDiv.append(link);
+                    $('.results').append(resultDiv);
+                });
+            }
+
+            function performSearch() {
+                var data = {};
+                var query = $('.search-box').val();
+                if (query) {
+                    data['query'] = query;
+                }
+                $('.dropdowns select').each(function () {
+                    var dropdown = $(this);
+                    var name = dropdown.attr('name');
+                    var selected = dropdown.val();
+                    if (selected) {
+                        data[name] = selected;
+                    }
+                });
+
+                $.ajax({
+                    url: '/search', // サーバーのエンドポイントURL
+                    type: 'POST',
+                    dataType: "json",
+                    contentType: 'application/json',
+                    data: JSON.stringify(data),
+                    success: function (response) {
+                        updateResults(response);
+                    },
+                    error: function (error) {
+                        console.error('Error during AJAX request', error);
+                    }
+                });
+            }
+
             // ドロップダウンが変更されたときのイベントハンドラ
             $('.dropdowns select').change(function () {
                 var dropdown = $(this); // 変更されたドロップダウン
                 var selectedName = dropdown.attr('name'); // 変更されたドロップダウンのname属性
                 var selectedValue = dropdown.val(); // 選択された値
-                data = JSON.stringify({ [selectedName] : selectedValue });
-                alert(data);
+                data = JSON.stringify({ [selectedName]: selectedValue });
+
+                set_mytimer();
 
                 // サーバーにPOSTリクエストを送信
                 $.ajax({
@@ -78,12 +147,13 @@
                     success: function (response) {
                         $('.dropdowns select').not(dropdown).each(function () {
                             var otherDropdown = $(this);
+                            var otherSelected = otherDropdown.val();
                             var newOptions = response[otherDropdown.attr('name')];
                             if (newOptions) {
-                                otherSelected = otherDropdown.selectedValue
                                 otherDropdown.empty();
                                 otherDropdown.append(new Option('', ''));
                                 newOptions.forEach(function (option) {
+                                    //alert(option + " / " + otherSelected)
                                     if (option == otherSelected) {
                                         otherDropdown.append(new Option(option, option, true, true));
                                     } else {
