@@ -62,6 +62,7 @@ def get_result():
     if "query" in request.json:
         q = str(request.json['query']).strip().lower()
         query = f"& ( ( fn.LOWER(DufModel.clip).contains('{q}') ) | ( fn.LOWER(DufModel.deepdanbooru).contains('{q}') ) | ( fn.LOWER(DufModel.duf).contains('{q}') ) ) "
+
     category = f"& ( DufModel.category == '{request.json['category']}' ) " if 'category' in request.json and len(request.json['category']) > 0 else ''
     model = f"& ( DufModel.model == '{request.json['model']}' ) " if 'model' in request.json and len(request.json['model']) > 0 else ''
     asset_type = f"& ( DufModel.asset_type == '{request.json['asset_type']}' ) " if 'asset_type' in request.json and len(request.json['asset_type']) > 0 else ''
@@ -71,7 +72,7 @@ def get_result():
     query = (
         "DufModel.select().where( ( DufModel.tip_png_path != '' ) "
         + category + model + asset_type + sub_type + product + query +
-        ').order_by(DufModel.duf.asc()).limit(300).execute()')
+        ' ).order_by(DufModel.duf.asc()).limit(300).execute()')
     
     print(query)
     
